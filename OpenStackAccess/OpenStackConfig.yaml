@@ -1,0 +1,6 @@
+access:
+    auth_url: "https://api.liberty.mikelangelo.gwdg.de:5000/v2.0"
+    username: "msahihi"
+    password: "MSB14512*&@"
+    tenant_name: "msahihi"
+    project_name: "msahihi"

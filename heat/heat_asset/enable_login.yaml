@@ -1,0 +1,11 @@
+#cloud-config
+debug: True
+ssh_pwauth: True
+disable_root: false
+chpasswd:
+  list: |
+   ubuntu:admin
+  expire: false
+runcmd:
+ - "sed -i'.orig' -e's/without-password/yes/' /etc/ssh/sshd_config"
+ - "service sshd restart"

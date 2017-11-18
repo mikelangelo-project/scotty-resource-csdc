@@ -1,0 +1,799 @@
+heat_template_version: 2015-10-15
+
+description: >
+
+parameters:
+                   #                                            #
+                   #                                            #
+                   #           P A R A M E T E R E S            #
+                   #                                            #
+                   #                                            #
+
+# NETWORK
+ private_network_subnet:
+  type: string
+  description: ID of public network for which floating IP addresses will be allocated
+  default: "192.168.2.0/24"
+
+ private_network_dns_server:
+  type: string
+  description: Private network dns
+  default: ["8.8.8.8", "4.2.2.4"]
+
+# INSTANCES
+
+ key_name:
+  type: string
+  description: Pair key name
+  default: cs-datacaching
+
+ swarm_keyvaluestore_flv:
+  type: string
+  description: flavor for swarm key value store host
+  default: kvm.m1.small
+
+
+ swarm_manager_flv:
+  type: string
+  description: flavor for swarm manager host
+  default: kvm.m1.small
+
+ swarm_workers_flv:
+  type: string
+  description: flavor for swarm worker hosts
+  default : kvm.m1.small
+
+ image_id:
+  type: string
+  description: image which would use for nodes
+  default: 4beaa052-8e21-4264-9ed9-2dfa41fd254f
+
+ private_subnet_id:
+  type: string
+  description: ID of private sub network into which servers get deployed
+  default: 7c1650ef-5227-4917-9990-0a1de98cd506
+
+ number_of_node:
+  type: string
+  description: number of client node which would join to the cluster
+  default: 1
+
+
+
+                   #                                            #
+                   #                                            #
+                   #           R E S O U R C E S                #
+                   #                                            #
+                   #                                            #
+
+resources:
+
+ internal_net:
+  type: OS::Neutron::Net
+
+ internal_subnet:
+  type: OS::Neutron::Subnet
+  properties:
+   network_id: { get_resource: internal_net }
+   cidr: { get_param: private_network_subnet }
+   dns_nameservers: {get_param: private_network_dns_server}
+   ip_version: 4
+
+ internal_router:
+  type: OS::Neutron::Router
+  properties:
+   external_gateway_info: { network: public }
+
+ internal_interface:
+  type: OS::Neutron::RouterInterface
+  properties:
+   router_id: { get_resource: internal_router }
+   subnet: { get_resource: internal_subnet }
+
+ keyValue_config_wait_handle:
+  type: AWS::CloudFormation::WaitConditionHandle
+
+ keyValue_config_wait_condition:
+  type: AWS::CloudFormation::WaitCondition
+  properties:
+   Handle:
+    get_resource: keyValue_config_wait_handle
+   Timeout: 1000
+
+ manager_config_wait_handle:
+  type: AWS::CloudFormation::WaitConditionHandle
+
+ manager_config_wait_condition:
+  type: AWS::CloudFormation::WaitCondition
+  properties:
+   Handle:
+    get_resource: manager_config_wait_handle
+   Timeout: 1000
+
+
+ node_wait_handle:
+  type: AWS::CloudFormation::WaitConditionHandle
+
+ node_wait_condition:
+  type: AWS::CloudFormation::WaitCondition
+  depends_on: Clients
+  properties:
+   Handle:
+    get_resource: node_wait_handle
+   Timeout: 1000
+
+
+ heat_param:
+  type: OS::Heat::SoftwareConfig
+  properties:
+   group: system
+   config:
+    str_replace:
+     template: |
+       #cloud-config
+       merge_how: dict(recurse_array)+list(append)
+       write_files:
+         - path: /etc/sysconfig/heat-params
+           owner: "root:root"
+           permissions: "0644"
+           content: |
+             WAIT_HANDLE="$WAIT_HANDLE"
+
+     params:
+      $WAIT_HANDLE: {get_resource: node_wait_handle }
+
+ enable_login:
+  type: OS::Heat::SoftwareConfig
+  properties:
+   group: system
+   config:
+    str_replace:
+     template: |
+       #cloud-config
+       debug: True
+       ssh_pwauth: True
+       disable_root: false
+       chpasswd:
+         list: |
+          cloud:admin
+         expire: false
+       runcmd:
+        - "sed -i'.orig' -e's/without-password/yes/' /etc/ssh/sshd_config"
+        - "service sshd restart"
+
+     params:
+      $empty: ""
+
+
+ cfn_signal:
+  type: OS::Heat::SoftwareConfig
+  properties:
+   group: ungrouped
+   config: |
+     #!/bin/sh
+
+     . /etc/sysconfig/heat-params
+
+     echo "notifying heat"
+     curl -sf -X PUT -H 'Content-Type: application/json' \
+      --data-binary '{"Status": "SUCCESS","Reason": "Node Setup completed", "Data": "OK", "UniqueId": "00000"}' \
+      "$WAIT_HANDLE"
+
+
+
+ keyvalue_config:
+  type: OS::Heat::SoftwareConfig
+  properties:
+   group: ungrouped
+   config:
+    str_replace:
+     template: |
+      #!/bin/bash
+      #set -x
+      #set -e
+
+      #                                                                       #
+      #                I N S T A L L I N G   D O C K E R                      #
+      #                                                                       #
+
+      docker_install () {
+      sudo pkill apt
+      sudo rm /var/lib/dpkg/lock
+      if which docker >/dev/null; then
+        echo -e "[+] Docker is already installed"
+      else
+        echo -e "[+] Installing Docker ....."
+        curl -sSL https://get.docker.com/ | sh
+        sudo usermod -aG docker $(whoami)
+        sudo service docker stop
+      fi
+
+      }
+
+      #                                                                       #
+      #     R E M O V E   P R E V I O U S   D O C K E R   S E R V I C E       #
+      #                                                                       #
+
+      docker_daemon=$(sudo netstat -tulpn | grep dockerd | wc -l)
+      docker_service=$(sudo service docker status | cut -d' ' -f2)
+      host_ip=$(sudo /sbin/ifconfig eth0| grep 'inet addr:' | cut -d: -f2 | awk '{print $1}')
+
+      service_check (){
+      if  test "${docker_service#*"running"}" != ${docker_service}
+        then
+          sudo service docker stop
+          sleep 2
+        else
+          if [ -f /var/lock/docker.pid ]; then
+            sudo rm /var/lock/docker.pid
+          fi
+      fi
+
+      if [ -n ${docker_daemon} ];
+        then
+          sudo pkill dockerd
+          sleep 2
+          if [ -f /var/lock/docker.pid ]; then
+
+          sudo rm /var/lock/docker.pid
+          fi
+      fi
+      }
+
+      #                                                                       #
+      #                D O C K E R   C O N F I G U R A T I O N                #
+      #                                                                       #
+
+      docker_config () {
+
+      echo -e "[+] Setting up $role"
+      if [[ $role == "keystore" ]]; then
+        sudo dockerd -H tcp://0.0.0.0:2375 -H unix:///var/run/docker.sock &
+        sleep 2
+        sudo docker stop consul
+        sudo docker rm -f consul
+        sudo docker rmi $(sudo docker images -q)
+        sudo docker run -d -p 8500:8500 --name=consul progrium/consul -server -bootstrap
+      fi
+
+      if [[ $role != "keystore" ]]; then
+      sudo dockerd -H tcp://0.0.0.0:2375 -H unix:///var/run/docker.sock --cluster-store=consul://$keyValue:8500  --cluster-advertise=${host_ip}:2376 &
+      sleep 5
+      fi
+
+      if [[ $role != "keystore" ]]; then
+      ps=$(sudo docker ps --filter "name=$role" -a -q)
+      ru=$(sudo docker ps --filter "name=$role" -q)
+      fi
+
+      if [ -n "$ps" ]
+      then
+        echo -e "[+] Stopping & Removing Previous containers\n"
+        sudo docker rm -f $ps > /dev/null
+        echo -e "---> containers removed"
+      fi
+
+      if [[ $role == "manager" ]]; then
+        sudo docker run -d --name swarm_$role -p 4000:4000 swarm manage -H :4000 --replication --advertise ${host_ip}:4000 consul://$keyValue:8500 > /dev/null &&
+      echo -e "[+] Swarm manager is ready"
+      fi
+      ## if you want that manager take role as a member in cluster make roll to !=keystore
+      if [[ $role != "keystore" ]]; then
+      sudo docker run -d --name swarm_$role_node swarm join --advertise=${host_ip}:2375 consul://$keyValue:8500 > /dev/null &&
+      echo -e "[+] $HOST joined as node"
+      fi
+      }
+
+
+
+      #                                                                       #
+      #                      D I S P L A Y   U S A G E                        #
+      #                                                                       #
+
+      while test $# -gt 0; do
+        case $1 in
+          -r|--role)
+          shift
+          if test $# -gt 0; then
+            role=${1}
+          else
+            echo "--- No role specified!!!"
+            exit 1
+          fi
+          shift
+          ;;
+        -k|--keystore)
+          shift
+          if test $# -gt 0; then
+            keyValue=${1}
+          else
+            echo "--- No keystore IP is specified!!!"
+          exit 1
+          fi
+          shift
+          ;;
+          -n|--nfs-server)
+            shift
+            if test $# -gt 0; then
+              nfs_srv=${1}
+            else
+              echo "--- No keystore IP is specified!!!"
+            exit 1
+            fi
+            shift
+            ;;
+        -h|--help)
+          echo "Usage: sudo ${0} <-r ROLE> <-c PATH/TO/FILE> <-n NFS Server>(-h)"
+          echo "  -r, --role  the role of node, values can be 'keystore' or 'other'"
+          echo "  -k, --keystore  ip address of keystore server"
+          echo "  -h, --help  show usage"
+          exit 0
+          ;;
+          \?)
+            echo "--- Invalid option"
+            ;;
+           *)
+            break
+            ;;
+        esac
+      done
+
+      docker_install
+      service_check
+      docker_config $role $keyValue
+      echo "Docker setup completed successfully."
+
+      # EOF
+
+     params:
+      $role: "keystore"
+
+ manager_config:
+  type: OS::Heat::SoftwareConfig
+  properties:
+   group: ungrouped
+   config:
+    str_replace:
+     template: |
+      #!/bin/bash
+      #set -x
+      #set -e
+
+      #                                                                       #
+      #                I N S T A L L I N G   D O C K E R                      #
+      #                                                                       #
+
+      docker_install () {
+      sudo pkill apt
+      sudo rm /var/lib/dpkg/lock
+      if which docker >/dev/null; then
+        echo -e "[+] Docker is already installed"
+      else
+        echo -e "[+] Installing Docker ....."
+        curl -sSL https://get.docker.com/ | sh
+        sudo usermod -aG docker $(whoami)
+        sudo service docker stop
+      fi
+
+      }
+
+      #                                                                       #
+      #     R E M O V E   P R E V I O U S   D O C K E R   S E R V I C E       #
+      #                                                                       #
+
+      docker_daemon=$(sudo netstat -tulpn | grep dockerd | wc -l)
+      docker_service=$(sudo service docker status | cut -d' ' -f2)
+      host_ip=$(sudo /sbin/ifconfig eth0| grep 'inet addr:' | cut -d: -f2 | awk '{print $1}')
+
+      service_check (){
+      if  test "${docker_service#*"running"}" != ${docker_service}
+        then
+          sudo service docker stop
+          sleep 2
+        else
+          if [ -f /var/lock/docker.pid ]; then
+            sudo rm /var/lock/docker.pid
+          fi
+      fi
+
+      if [ -n ${docker_daemon} ];
+        then
+          sudo pkill dockerd
+          sleep 2
+          if [ -f /var/lock/docker.pid ]; then
+
+          sudo rm /var/lock/docker.pid
+          fi
+      fi
+      }
+
+      #                                                                       #
+      #                D O C K E R   C O N F I G U R A T I O N                #
+      #                                                                       #
+
+      docker_config () {
+
+      echo -e "[+] Setting up $role"
+      if [[ $role == "keystore" ]]; then
+        sudo dockerd -H tcp://0.0.0.0:2375 -H unix:///var/run/docker.sock &
+        sleep 2
+        sudo docker stop consul
+        sudo docker rm -f consul
+        sudo docker rmi $(sudo docker images -q)
+        sudo docker run -d -p 8500:8500 --name=consul progrium/consul -server -bootstrap
+      fi
+
+      if [[ $role != "keystore" ]]; then
+      sudo dockerd -H tcp://0.0.0.0:2375 -H unix:///var/run/docker.sock --cluster-store=consul://$keyValue:8500  --cluster-advertise=${host_ip}:2376 &
+      sleep 5
+      fi
+
+      if [[ $role != "keystore" ]]; then
+      ps=$(sudo docker ps --filter "name=$role" -a -q)
+      ru=$(sudo docker ps --filter "name=$role" -q)
+      fi
+
+      if [ -n "$ps" ]
+      then
+        echo -e "[+] Stopping & Removing Previous containers\n"
+        sudo docker rm -f $ps > /dev/null
+        echo -e "---> containers removed"
+      fi
+
+      if [[ $role == "manager" ]]; then
+        sudo docker run -d --name swarm_$role -p 4000:4000 swarm manage -H :4000 --replication --advertise ${host_ip}:4000 consul://$keyValue:8500 > /dev/null &&
+      echo -e "[+] Swarm manager is ready"
+      fi
+      ## if you want that manager take role as a member in cluster make roll to !=keystore
+      if [[ $role != "keystore" ]]; then
+      sudo docker run -d --name swarm_$role_node swarm join --advertise=${host_ip}:2375 consul://$keyValue:8500 > /dev/null &&
+      echo -e "[+] $HOST joined as node"
+      fi
+      }
+
+
+
+      #                                                                       #
+      #                      D I S P L A Y   U S A G E                        #
+      #                                                                       #
+
+      while test $# -gt 0; do
+        case $1 in
+          -r|--role)
+          shift
+          if test $# -gt 0; then
+            role=${1}
+          else
+            echo "--- No role specified!!!"
+            exit 1
+          fi
+          shift
+          ;;
+        -k|--keystore)
+          shift
+          if test $# -gt 0; then
+            keyValue=${1}
+          else
+            echo "--- No keystore IP is specified!!!"
+          exit 1
+          fi
+          shift
+          ;;
+          -n|--nfs-server)
+            shift
+            if test $# -gt 0; then
+              nfs_srv=${1}
+            else
+              echo "--- No keystore IP is specified!!!"
+            exit 1
+            fi
+            shift
+            ;;
+        -h|--help)
+          echo "Usage: sudo ${0} <-r ROLE> <-c PATH/TO/FILE> <-n NFS Server>(-h)"
+          echo "  -r, --role  the role of node, values can be 'keystore' or 'other'"
+          echo "  -k, --keystore  ip address of keystore server"
+          echo "  -h, --help  show usage"
+          exit 0
+          ;;
+          \?)
+            echo "--- Invalid option"
+            ;;
+           *)
+            break
+            ;;
+        esac
+      done
+
+      docker_install
+      service_check
+      docker_config $role $keyValue
+      echo "Docker setup completed successfully."
+
+      # EOF
+     params:
+      $role: "manager"
+      $keyValue: "192.168.2.10"
+
+
+ client_config:
+  type: OS::Heat::SoftwareConfig
+  properties:
+   group: ungrouped
+   config:
+    str_replace:
+     template: |
+      #!/bin/bash
+      #set -x
+      #set -e
+
+      #                                                                       #
+      #                I N S T A L L I N G   D O C K E R                      #
+      #                                                                       #
+
+      docker_install () {
+      sudo pkill apt
+      sudo rm /var/lib/dpkg/lock
+      if which docker >/dev/null; then
+        echo -e "[+] Docker is already installed"
+      else
+        echo -e "[+] Installing Docker ....."
+        curl -sSL https://get.docker.com/ | sh
+        sudo usermod -aG docker $(whoami)
+        sudo service docker stop
+      fi
+
+      }
+
+      #                                                                       #
+      #     R E M O V E   P R E V I O U S   D O C K E R   S E R V I C E       #
+      #                                                                       #
+
+      docker_daemon=$(sudo netstat -tulpn | grep dockerd | wc -l)
+      docker_service=$(sudo service docker status | cut -d' ' -f2)
+      host_ip=$(sudo /sbin/ifconfig eth0| grep 'inet addr:' | cut -d: -f2 | awk '{print $1}')
+
+      service_check (){
+      if  test "${docker_service#*"running"}" != ${docker_service}
+        then
+          sudo service docker stop
+          sleep 2
+        else
+          if [ -f /var/lock/docker.pid ]; then
+            sudo rm /var/lock/docker.pid
+          fi
+      fi
+
+      if [ -n ${docker_daemon} ];
+        then
+          sudo pkill dockerd
+          sleep 2
+          if [ -f /var/lock/docker.pid ]; then
+
+          sudo rm /var/lock/docker.pid
+          fi
+      fi
+      }
+
+      #                                                                       #
+      #                D O C K E R   C O N F I G U R A T I O N                #
+      #                                                                       #
+
+      docker_config () {
+
+      echo -e "[+] Setting up $role"
+      if [[ $role == "keystore" ]]; then
+        sudo dockerd -H tcp://0.0.0.0:2375 -H unix:///var/run/docker.sock &
+        sleep 2
+        sudo docker stop consul
+        sudo docker rm -f consul
+        sudo docker rmi $(sudo docker images -q)
+        sudo docker run -d -p 8500:8500 --name=consul progrium/consul -server -bootstrap
+      fi
+
+      if [[ $role != "keystore" ]]; then
+      sudo dockerd -H tcp://0.0.0.0:2375 -H unix:///var/run/docker.sock --cluster-store=consul://$keyValue:8500  --cluster-advertise=${host_ip}:2376 &
+      sleep 5
+      fi
+
+      if [[ $role != "keystore" ]]; then
+      ps=$(sudo docker ps --filter "name=$role" -a -q)
+      ru=$(sudo docker ps --filter "name=$role" -q)
+      fi
+
+      if [ -n "$ps" ]
+      then
+        echo -e "[+] Stopping & Removing Previous containers\n"
+        sudo docker rm -f $ps > /dev/null
+        echo -e "---> containers removed"
+      fi
+
+      if [[ $role == "manager" ]]; then
+        sudo docker run -d --name swarm_$role -p 4000:4000 swarm manage -H :4000 --replication --advertise ${host_ip}:4000 consul://$keyValue:8500 > /dev/null &&
+      echo -e "[+] Swarm manager is ready"
+      fi
+      ## if you want that manager take role as a member in cluster make roll to !=keystore
+      if [[ $role != "keystore" ]]; then
+      sudo docker run -d --name swarm_$role_node swarm join --advertise=${host_ip}:2375 consul://$keyValue:8500 > /dev/null &&
+      echo -e "[+] $HOST joined as node"
+      fi
+      }
+
+
+
+      #                                                                       #
+      #                      D I S P L A Y   U S A G E                        #
+      #                                                                       #
+
+      while test $# -gt 0; do
+        case $1 in
+          -r|--role)
+          shift
+          if test $# -gt 0; then
+            role=${1}
+          else
+            echo "--- No role specified!!!"
+            exit 1
+          fi
+          shift
+          ;;
+        -k|--keystore)
+          shift
+          if test $# -gt 0; then
+            keyValue=${1}
+          else
+            echo "--- No keystore IP is specified!!!"
+          exit 1
+          fi
+          shift
+          ;;
+          -n|--nfs-server)
+            shift
+            if test $# -gt 0; then
+              nfs_srv=${1}
+            else
+              echo "--- No keystore IP is specified!!!"
+            exit 1
+            fi
+            shift
+            ;;
+        -h|--help)
+          echo "Usage: sudo ${0} <-r ROLE> <-c PATH/TO/FILE> <-n NFS Server>(-h)"
+          echo "  -r, --role  the role of node, values can be 'keystore' or 'other'"
+          echo "  -k, --keystore  ip address of keystore server"
+          echo "  -h, --help  show usage"
+          exit 0
+          ;;
+          \?)
+            echo "--- Invalid option"
+            ;;
+           *)
+            break
+            ;;
+        esac
+      done
+
+      docker_install
+      service_check
+      docker_config $role $keyValue
+      echo "Docker setup completed successfully."
+
+      # EOF
+     params:
+      $role: "client"
+      $keyValue: "192.168.2.10"
+
+ keyvalue_node_init:
+  type: OS::Heat::MultipartMime
+  properties:
+    parts:
+     - config: { get_resource: enable_login }
+
+     - config: { get_resource: keyvalue_config }
+     - config:
+         str_replace:
+           template: |
+            #!/bin/bash -v
+            curl -sf -X PUT -H 'Content-Type: application/json' \
+            --data-binary '{"Status": "SUCCESS","Reason": "Key Value Setup completed","Data": "OK", "UniqueId": "00001"}' \
+            "$WAIT_HANDLE"
+           params:
+             $WAIT_HANDLE: {get_resource: keyValue_config_wait_handle }
+
+ manager_node_init:
+  type: OS::Heat::MultipartMime
+  properties:
+    parts:
+     - config: { get_resource: manager_config }
+     - config:
+         str_replace:
+           template: |
+            #!/bin/bash -v
+            curl -sf -X PUT -H 'Content-Type: application/json' \
+            --data-binary '{"Status": "SUCCESS","Reason": "Manager Setup completed","Data": "OK", "UniqueId": "00002"}' \
+            "$WAIT_HANDLE"
+           params:
+             $WAIT_HANDLE: {get_resource: manager_config_wait_handle }
+
+ client_node_init:
+  type: OS::Heat::MultipartMime
+  properties:
+    parts:
+     - config: { get_resource: enable_login }
+     - config: { get_resource: heat_param }
+     - config: { get_resource: client_config }
+     - config: { get_resource: cfn_signal }
+
+
+ KeyValue:
+  type: OS::Nova::Server
+  properties:
+   image: { get_param: image_id }
+   flavor: { get_param: swarm_keyvaluestore_flv }
+   key_name: { get_param: key_name }
+   networks:
+     - port: { get_resource: KeyValue_port }
+   user_data_format: RAW
+   user_data: { get_resource: keyvalue_node_init  }
+
+
+ Manager:
+  type: OS::Nova::Server
+  properties:
+   image: { get_param: image_id }
+   flavor: { get_param: swarm_manager_flv }
+   key_name: { get_param: key_name }
+   networks:
+     - port: { get_resource: manager_port }
+   user_data_format: RAW
+   user_data: { get_resource: manager_node_init  }
+
+ Clients:
+  type: OS::Heat::ResourceGroup
+  properties:
+   count: { get_param: number_of_node }
+   resource_def:
+    type: OS::Nova::Server
+    properties:
+     image: { get_param: image_id }
+     flavor: { get_param: swarm_workers_flv }
+     key_name: { get_param: key_name }
+     networks:
+       - network: {get_resource: internal_net}
+     user_data_format: RAW
+     user_data: { get_resource: client_node_init  }
+
+ KeyValue_port:
+    type: OS::Neutron::Port
+    properties:
+        name: "keyValue_port"
+        network_id: { get_resource: internal_net }
+        fixed_ips:
+            - subnet_id: { get_resource: internal_subnet }
+              ip_address: 192.168.2.10
+
+ manager_port:
+  type: OS::Neutron::Port
+  properties:
+   name: "manager_port"
+   network_id: { get_resource: internal_net }
+   fixed_ips:
+       - subnet_id: { get_resource: internal_subnet }
+
+ manager_floating_ip:
+  type: OS::Neutron::FloatingIP
+  properties:
+   floating_network_id: public
+   port_id: { get_resource: manager_port }
+
+                   #                                            #
+                   #                                            #
+                   #       T E M P L A T E   O U T P U T        #
+                   #                                            #
+                   #                                            #
+
+outputs:
+
+ Manager_Public_ip:
+  value: { get_attr: [manager_floating_ip, floating_ip_address] }
+ Instance_list

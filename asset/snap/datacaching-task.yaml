@@ -1,0 +1,45 @@
+---
+  version: 1
+  schedule:
+    type: "simple"
+    interval: "1s"
+  max-failures: 10000
+  workflow:
+    collect:
+      metrics:
+        /gwdg/cloudsuite/datacaching/timeDiff: {}
+        /gwdg/cloudsuite/datacaching/rps: {}
+        /gwdg/cloudsuite/datacaching/requests: {}
+        /gwdg/cloudsuite/datacaching/gets: {}
+        /gwdg/cloudsuite/datacaching/sets: {}
+        /gwdg/cloudsuite/datacaching/hits: {}
+        /gwdg/cloudsuite/datacaching/misses: {}
+        /gwdg/cloudsuite/datacaching/avg_lat: {}
+        /gwdg/cloudsuite/datacaching/90th: {}
+        /gwdg/cloudsuite/datacaching/95th: {}
+        /gwdg/cloudsuite/datacaching/99th: {}
+        /gwdg/cloudsuite/datacaching/std: {}
+        /gwdg/cloudsuite/datacaching/min: {}
+        /gwdg/cloudsuite/datacaching/max: {}
+        /gwdg/cloudsuite/datacaching/avgGetSize: {}
+      config:
+         /gwdg/cloudsuite/datacaching:
+           csv_path: "/var/log/benchmark/detail.csv"
+      process:
+        -
+          plugin_name: "tag"
+          config:
+            tags: "exp:cs-datacaching"
+            source: "/tmp/exp.txt"
+      publish:
+        -
+          plugin_name: "influxdb"
+          config:
+             host: "api.liberty.mikelangelo.gwdg.de"
+             port: 8086
+             database: "scheduler"
+             retention: "default"
+             user: "scheduler"
+             password: "4scheduler"
+             https: true
+             skip-verify: false

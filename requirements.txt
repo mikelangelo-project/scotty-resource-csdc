@@ -1,0 +1,4 @@
+python-openstackclient
+python-heatclient
+python-neutronclient
+pycrypto
