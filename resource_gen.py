@@ -41,7 +41,7 @@ def experiment_path():
     return experiment_path
 
 def get_heat_args(params):
-    stack_abs_path = os.path.join(experiment_path(), params['stack_path'])
+    stack_abs_path = os.path.join(experiment_path(), params['stack_template'])
     heat_args = {
         'auth_url': params['OpenStack_auth_url'],
         'username': params['OpenStack_username'],
