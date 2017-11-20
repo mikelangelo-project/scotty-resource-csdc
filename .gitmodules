@@ -1,0 +1,3 @@
+[submodule "OpenStackAccess"]
+	path = OpenStackAccess
+	url = git@gitlab.gwdg.de:mikelangelo/python-openstack-access.git
