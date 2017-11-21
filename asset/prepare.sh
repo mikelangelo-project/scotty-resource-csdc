@@ -52,11 +52,11 @@ create_client () {
 load_snap_plugin(){
 
 echo -e "[+] Loading Collector Plugin ....."
-snaptel plugin load $PWD/asset/snap/snap-plugin-processor-tag > /dev/null
+snaptel plugin load $PWD/snap/snap-plugin-processor-tag > /dev/null
 echo -e "[*] Tag Processor Plugin Loaded"
-snaptel plugin load $PWD/asset/snap/snap-plugin-publisher-influxdb > /dev/null
+snaptel plugin load $PWD/snap/snap-plugin-publisher-influxdb > /dev/null
 echo -e "[*] Influxdb Publisher Plugin Loaded"
-snaptel plugin load $PWD/asset/snap/snap-plugin-collector-cloudsuite-datacaching > /dev/null
+snaptel plugin load $PWD/snap/snap-plugin-collector-cloudsuite-datacaching > /dev/null
 echo -e "[*] Cloudsuite-datacaching Collector Plugin Loaded\n"
 
 }
