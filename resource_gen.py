@@ -30,9 +30,13 @@ def ssh_to(root_path, private_key, remote_server, user, **args):
                    args['memory'] + " " +
                    args['object_size'])
 
+def get_root_path():
+    root_path = os.path.dirname(__file__)
+    return root_path
 
 def get_heat_args(params):
-    stack_abs_path = os.path.join(os.path.dirname(__file__), params['stack_template'])
+    root_path = get_root_path()
+    stack_abs_path = os.path.join(root_path, params['stack_template'])
     heat_args = {
         'auth_url': params['OpenStack_auth_url'],
         'username': params['OpenStack_username'],
@@ -65,7 +69,7 @@ def deploy(context):
     stack = HeatStack(**heat_args)
     stack.create()
     ip = stack.get_manager_ip()
-    root_path = os.path.dirname(__file__)
+    root_path = get_root_path()
     instances_names = stack.get_all_instances()
     endpoint = {
         'swarm_manager': {'ip': ip,
