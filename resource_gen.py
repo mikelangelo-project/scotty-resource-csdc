@@ -30,9 +30,11 @@ def ssh_to(root_path, private_key, remote_server, user, **args):
                    args['memory'] + " " +
                    args['object_size'])
 
+
 def get_root_path():
     root_path = os.path.dirname(__file__)
     return root_path
+
 
 def get_heat_args(params):
     root_path = get_root_path()
