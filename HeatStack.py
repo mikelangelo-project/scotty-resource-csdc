@@ -108,7 +108,6 @@ class HeatStack(object):
             self.check_completed_stack()
         except Exception as e:
             logger.error(str(e))
-            sys.exit(0)
 
     def delete_keypair(self):
         self._delete_openstack_keypair(self._stack_name)
