@@ -3,7 +3,6 @@
 import logging
 import os
 import shutil
-import sys
 from time import sleep
 
 from Crypto.PublicKey import RSA
@@ -92,7 +91,6 @@ class HeatStack(object):
             if output.stack_status == "CREATE_FAILED":
                 logger.error("[X] Stack CREATE FAILED")
                 logger.error("[X] Check stack logs")
-                sys.exit(0)
 
     def create_keypair(self):
         self._store_private_key(self._stack_name)
