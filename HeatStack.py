@@ -91,6 +91,7 @@ class HeatStack(object):
             if output.stack_status == "CREATE_FAILED":
                 logger.error("[X] Stack CREATE FAILED")
                 logger.error("[X] Check stack logs")
+                break
 
     def create_keypair(self):
         self._store_private_key(self._stack_name)
