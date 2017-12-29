@@ -46,7 +46,7 @@ parameters:
  image_id:
   type: string
   description: image which would use for nodes
-  default: 4beaa052-8e21-4264-9ed9-2dfa41fd254f
+  default: f1e57029-92ce-48bd-b7fa-540ed97a94ad
 
  private_subnet_id:
   type: string
