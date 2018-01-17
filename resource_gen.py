@@ -14,7 +14,6 @@ def ssh_to(root_path, private_key, remote_server, user, **args):
             '[ -d ~/benchmark/cs-datacaching ] || mkdir -p ~/benchmark/cs-datacaching')
         put(root_path + '/asset/', '~/benchmark/cs-datacaching/')
         fabric_run('sudo chmod 750 ~/benchmark/cs-datacaching/asset/prepare.sh')
-        fabric_run('echo $(hostname) >>  /tmp/exp.txt ')
         fabric_run('echo "[+] Installing SNAP ....."')
         fabric_run(
             'sudo curl -s https://packagecloud.io/install/repositories/intelsdi-x/snap/script.deb.sh | sudo bash')
