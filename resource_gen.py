@@ -6,6 +6,19 @@ from HeatStack import HeatStack
 
 logger = logging.getLogger(__name__)
 
+def reduce_logging():
+    reduce_loggers = {
+        'keystoneauth.identity.v2',
+        'keystoneauth.identity.v2.base',
+        'keystoneauth.session',
+        'urllib3.connectionpool',
+        'stevedore.extension',
+        'novaclient.v2.client',
+        'paramiko.transport'
+    }
+    for logger in reduce_loggers:
+        logging.getLogger(logger).setLevel(logging.WARNING)
+reduce_logging()
 
 def ssh_to(root_path, private_key, remote_server, user, **args):
     logging.info("\n# Swarm Manager IP address is : " + remote_server)
