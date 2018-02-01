@@ -81,8 +81,8 @@ class HeatStack(object):
 
     def check_completed_stack(self):
         while True:
+            logger.info('Wait for Stack {}'.format(self._stack_name))
             output = self._openstack._heat.stacks.get(self._stack_name)
-            logger.debug(output)
             if output.stack_status == "CREATE_COMPLETE":
                 logger.info("[+] Stack CREATE completed successfully ")
                 self._manager_ip = output.outputs[0]['output_value']
@@ -90,8 +90,8 @@ class HeatStack(object):
 
             if output.stack_status == "CREATE_FAILED":
                 logger.error("[X] Stack CREATE FAILED")
-                logger.error("[X] Check stack logs")
                 break
+            sleep(5)
 
     def create_keypair(self):
         self._store_private_key(self._stack_name)
@@ -105,7 +105,6 @@ class HeatStack(object):
             output = self._openstack._heat.stacks.create(
                 **openstack_stack_args)
             logger.debug(output)
-            logger.info("[!] Creating stack takes few minutes")
             self.check_completed_stack()
         except Exception as e:
             logger.error(str(e))
