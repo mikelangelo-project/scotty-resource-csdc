@@ -91,7 +91,7 @@ class HeatStack(object):
             if output.stack_status == "CREATE_FAILED":
                 logger.error("[X] Stack CREATE FAILED")
                 break
-            sleep(5)
+            sleep(20)
 
     def create_keypair(self):
         self._store_private_key(self._stack_name)
